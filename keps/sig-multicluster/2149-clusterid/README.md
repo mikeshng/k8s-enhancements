@@ -93,16 +93,27 @@ tags, and then generate with `hack/update-toc.sh`.
   - [<code>ClusterProperty</code> CRD](#clusterproperty-crd)
   - [Well known properties](#well-known-properties)
     - [Property: <code>cluster.clusterset.k8s.io</code>](#property-clusterclustersetk8sio)
+      - [Use cases](#use-cases)
+      - [Producers](#producers)
       - [Uniqueness](#uniqueness)
       - [Lifespan](#lifespan)
       - [Contents](#contents)
       - [Consumers](#consumers)
       - [Notable scenarios](#notable-scenarios)
     - [Property: <code>clusterset.k8s.io</code>](#property-clustersetk8sio)
+      - [Use cases](#use-cases-1)
+      - [Producers](#producers-1)
       - [Lifespan](#lifespan-1)
       - [Contents](#contents-1)
       - [Consumers](#consumers-1)
-  - [Additional Properties](#additional-properties)
+  - [Property Ladder](#property-ladder)
+    - [Extension properties](#extension-properties)
+    - [Standard properties](#standard-properties)
+    - [Core properties](#core-properties)
+    - [Conformance](#conformance)
+    - [Compatibility and versioning](#compatibility-and-versioning)
+    - [Deprecation and removal](#deprecation-and-removal)
+    - [Property definition template](#property-definition-template)
   - [Notes/Constraints/Caveats](#notesconstraintscaveats)
     - [Note: On ClusterProperty.value max length validation](#note-on-clusterpropertyvalue-max-length-validation)
   - [Risks and Mitigations](#risks-and-mitigations)
@@ -129,6 +140,8 @@ tags, and then generate with `hack/update-toc.sh`.
 - [Implementation History](#implementation-history)
 - [Drawbacks](#drawbacks)
 - [Alternatives](#alternatives)
+  - [Promoting properties by vote](#promoting-properties-by-vote)
+  - [A version for each property](#a-version-for-each-property)
 - [Infrastructure Needed (Optional)](#infrastructure-needed-optional)
 <!-- /toc -->
 
@@ -375,7 +388,7 @@ following information:
 
 The schema for `ClusterProperty` is intentionally loose to support multiple
 forms of information, including arbitrary additional identification related
-properties described by users (see "Additional Properties", below), but certain
+properties described by users (see "Extension properties", below), but certain
 well-known properties will add additional schema constraints, such as those
 described in the next section.
 
@@ -390,10 +403,45 @@ cases dependent on knowledge of a cluster's id or ClusterSet membership.
 The requirements below use the keywords **must, should,** and **may**
 purposefully in accordance with [RFC-2119](https://tools.ietf.org/html/rfc2119).
 
+Every well known property is at the standard or the core stage of the
+[Property Ladder](#property-ladder), which also defines how further properties
+become well known. The table below records the stage of each well known
+property, the day it reached that stage, and its deprecation and removal dates
+if it has been deprecated.
+
+| Property                    | Stage | Since               | Deprecated | Removal |
+|-----------------------------|-------|---------------------|------------|---------|
+| `cluster.clusterset.k8s.io` | Core  | Predates the ladder | -          | -       |
+| `clusterset.k8s.io`         | Core  | Predates the ladder | -          | -       |
+
+This KEP required both properties in every member of a ClusterSet before the
+ladder existed, which makes them core properties without having gone through
+its promotion criteria.
+
 
 #### Property: `cluster.clusterset.k8s.io`
 
 Contains a unique identifier for the containing cluster.
+
+
+##### Use cases
+
+*   Identifying a cluster within its ClusterSet, as in [ClusterSet
+    membership](#clusterset-membership) and [Multi-tenant
+    controllers](#multi-tenant-controllers).
+*   Disambiguating the backends of a headless multi-cluster service through
+    DNS, as in [Multi-Cluster Services](#multi-cluster-services).
+*   Identifying the cluster that logs, events and metrics come from, as in
+    [Diagnostics](#diagnostics).
+
+
+##### Producers
+
+*   The identifier **may** be selected and stored locally in the cluster, for
+    example by a controller when the cluster is created or by the cluster
+    administrator, or be assigned by whatever manages ClusterSet membership.
+    This KEP does not prescribe which, see the [design
+    details](#clusterclustersetk8sio-clusterproperty).
 
 
 ##### Uniqueness
@@ -454,6 +502,23 @@ Contains an identifier that relates the containing cluster to the ClusterSet in
 which it belongs.
 
 
+##### Use cases
+
+*   Determining whether a cluster is a member of a ClusterSet and of which one,
+    as in [ClusterSet membership](#clusterset-membership).
+*   Detecting that a cluster joined, left or moved between ClusterSets, as in
+    [Joining or moving between
+    ClusterSets](#joining-or-moving-between-clustersets).
+
+
+##### Producers
+
+*   The identifier is expected to be produced by whatever manages ClusterSet
+    membership above the level of the cluster, for example a cluster registry
+    or a human running kubectl, see the [design
+    details](#clustersetk8sio-clusterproperty).
+
+
 ##### Lifespan
 
 *   The identifier **must** exist and be immutable for the duration of a
@@ -475,16 +540,269 @@ which it belongs.
     membership in a ClusterSet.
 
 
-### Additional Properties
+### Property Ladder
 
-Implementers are free to add additional properties as they see fit, so long as
+We foresee that there will be more properties that the community wants to adopt
+as "well known" properties. The property ladder defines the three stages that a
+property can be at, what can be expected of a property at each stage, and the
+process for moving a property from one stage to the next, so that properties
+are vetted before they become well known or required. Like the previous
+section, it uses the keywords **must, should,** and **may** in accordance with
+[RFC-2119](https://tools.ietf.org/html/rfc2119).
+
+| Stage     | Defined in | Name                        | In a cluster                          |
+|-----------|------------|-----------------------------|---------------------------------------|
+| Extension | Elsewhere  | Not under a reserved suffix | Optional                              |
+| Standard  | This KEP   | Under a reserved suffix     | Optional                              |
+| Core      | This KEP   | Under a reserved suffix     | Required where its definition applies |
+
+Standard and core properties together are the [well known
+properties](#well-known-properties).
+
+The ladder uses the following terms:
+
+*   A **producer** is whatever creates and maintains `ClusterProperty` objects
+    in a cluster, for example a cluster provider, a cluster manager, an MCS
+    implementation, or a cluster administrator applying manifests. A cluster
+    **may** have several producers that each maintain different properties, so
+    the ladder does not assume a single implementation of the About API in a
+    cluster.
+*   A **consumer** is whatever reads `ClusterProperty` objects, from the
+    cluster itself or from a copy of them such as the `status.properties` of a
+    [ClusterProfile](../4322-cluster-inventory/README.md).
+*   Producers, or consumers, are **independent** when they are separate
+    projects or products. Forks and redistributions of one of them count once.
+*   The **definition** of a property is its name together with the requirements
+    on it, written in the form of the [property definition
+    template](#property-definition-template).
+
+A property changes stage through a pull request against this KEP, which is
+reviewed and approved by the SIG-Multicluster approvers like any other change
+to it. There is no vote (see [Promoting properties by
+vote](#promoting-properties-by-vote)). The criteria listed for each stage are
+what the pull request has to show, and a proposal that does not meet them yet
+can be updated, or made again, once it does.
+
+#### Extension properties
+
+Every property that is not defined in this KEP is an extension property.
+Producers are free to add extension properties as they see fit, so long as
 they do not conflict with the well known properties _and_ utilize a suffix. The
 following suffixes are reserved for Kubernetes and related projects: `.k8s.io`,
-`.kubernetes.io`. For example, an implementation may utilize the `Kind`
+`.kubernetes.io`. For example, a producer may utilize the `Kind`
 `ClusterProperty` to store objects with the name
 `fingerprint.example.com` but not `fingerprint.k8s.io`. Cluster operators are
 free to use non-namespaced properties (e.g. `fingerprint`) as they see fit, but
 any shared tooling should use appropriately namespaced names.
+
+An extension property belongs to whoever defines it, who also decides how it
+changes and when it is retired. Nobody else is required to produce or to
+understand it, the conformance tests do not check it, and it **may** remain an
+extension property indefinitely.
+
+The suffix **should** be a DNS name that the owner of the property controls, as
+with the keys of labels and annotations. Extension properties that are defined
+independently then cannot collide with each other, nor with standard and core
+properties, even when they describe the same thing: two parties that each
+define a fingerprint end up with, for example, `fingerprint.example.com` and
+`fingerprint.example.org`.
+
+#### Standard properties
+
+A standard property is defined in this KEP, under a name with a reserved
+suffix. Producing it is optional, but a `ClusterProperty` with the name of a
+standard property **must** conform to the definition of that property, whoever
+produces it. Consumers **may** rely on the definition whenever the property is
+present, and **must** tolerate its absence.
+
+A property becomes standard when a pull request that adds its definition to
+[Well known properties](#well-known-properties) merges. The pull request
+**must** show that:
+
+1. The definition follows the [property definition
+   template](#property-definition-template), and so states the use cases of
+   the property and who is expected to produce and to consume it.
+2. The proposal was presented at a SIG-Multicluster meeting.
+3. The [conformance](#conformance) tests have checks for the definition.
+4. At least two independent producers publish the property as defined and have
+   submitted passing conformance reports for it.
+5. At least one consumer uses the property, so that it is known to be used and
+   not only published.
+
+The pull request also assigns the name. When similar extension properties
+exist, the proposal settles on one definition and gives it a new name under a
+reserved suffix, for example `fingerprint.k8s.io`, instead of reusing one of
+the existing names. The extension properties are not affected: their
+producers **may** keep publishing them next to the standard property, and
+**should** do so for as long as their consumers need to move to the new name.
+
+Until the pull request merges, the proposed name and definition can still
+change. Producers **may** already publish the property under the proposed name
+in order to produce the conformance reports.
+
+#### Core properties
+
+A core property is a standard property that is also required: it **must** be
+present, and conform to its definition, in every cluster where the About API is
+installed and the definition applies. The definition states which clusters
+these are; the two properties above, for example, apply to the clusters that
+are members of a ClusterSet. Consumers **may** rely on a core property being
+present in such a cluster.
+
+A cluster that lacks a core property that applies to it is not conformant, and
+the conformance tests report this as a failure. Nothing in the About API
+rejects or repairs such a cluster, so consumers **should** report a missing
+core property as an error instead of assuming a value for it.
+
+A standard property becomes core when a pull request that changes its stage
+merges. Its name stays the same, since a name does not encode the stage. The
+pull request **must** show that:
+
+1. The property has been standard for at least 6 months, counted from the day
+   on which the pull request that made it standard merged.
+2. At least three independent producers have submitted passing conformance
+   reports for it. They **should** include at least one provider of managed
+   clusters and at least one project that is not tied to a provider, to show
+   that the property can be produced wherever the About API is installed.
+3. At least two independent consumers use the property.
+4. The definition states who is expected to produce the property in each
+   cluster that it applies to, so that it is clear how every such cluster can
+   meet the requirement.
+5. The proposal was presented at a SIG-Multicluster meeting.
+
+#### Conformance
+
+The conformance tests described in the [Test Plan](#test-plan) will contain
+checks for the definition of every standard and core property. They read the
+`ClusterProperty` objects of a running cluster and change nothing. The checks
+of a core property run for every cluster that the property applies to, and the
+checks of a standard property run when the property is present.
+
+A producer runs the tests against a cluster in which it publishes properties,
+and submits the resulting report in a pull request to the [About API
+repository](https://github.com/kubernetes-sigs/about-api), as is done for
+[Gateway
+API](https://github.com/kubernetes-sigs/gateway-api/tree/main/conformance/reports)
+and for
+[ClusterProfile](https://github.com/kubernetes-sigs/cluster-inventory-api/tree/main/conformance).
+A report names the producer, the revision of the tests, and the properties that
+this producer itself publishes. It counts toward the criteria above for those
+properties only.
+
+The work is divided as follows:
+
+*   Whoever proposes a property provides its definition and the checks for it.
+*   Producers run the tests and submit their own reports. The About API
+    subproject does not run the tests against producers and does not monitor
+    them: the submitted reports are the only record that the ladder relies on.
+*   The About API subproject maintains the tests and reviews the checks and the
+    reports that it receives. It does not provide producers, controllers or
+    admission webhooks: requirements that hold for every property are enforced
+    by the CRD schema, the requirements of an individual definition are
+    verified by the tests, and producers remain free to add admission control
+    of their own.
+
+#### Compatibility and versioning
+
+Well known properties do not carry a version of their own (see [A version for
+each property](#a-version-for-each-property)), and the `apiVersion` of a
+`ClusterProperty` is the version of its schema, not of the definition of any
+property. The following rules apply instead:
+
+*   The definition of a standard or core property **must not** change
+    incompatibly. A change is incompatible when it adds a **must**, takes away
+    something that consumers may rely on, or changes the format or the meaning
+    of the value. The only exception is the promotion to core, which makes the
+    presence of the property required. Clarifications and other compatible
+    changes are made in place, through a pull request against this KEP.
+*   An incompatible change is made by defining a new property under a new name,
+    which goes through the ladder like any other property. Producers publish
+    the old and the new property side by side, every consumer reads the one it
+    understands, and the old property **may** then be deprecated as described
+    below.
+*   A name **must not** be reused for a different definition.
+*   The periods that the ladder uses are counted from the day on which the
+    corresponding pull request merged. The table in [Well known
+    properties](#well-known-properties) records these dates, so that no release
+    schedule is needed to count them.
+
+A consumer written against an earlier text of a definition therefore keeps
+working with every conformant producer, and the other way around, so there is
+no version skew to manage between the producers and the consumers of a
+property.
+
+#### Deprecation and removal
+
+Clusters, producers and consumers are upgraded independently of each other and
+often slowly, so the deprecation of a standard or core property is expected to
+be rare, and is slow on purpose. Requiring producers and consumers before a
+property is promoted is meant to keep unused properties out of this KEP in the
+first place. The rules below follow the [Kubernetes deprecation
+policy](https://kubernetes.io/docs/reference/using-api/deprecation-policy/):
+
+*   A property is deprecated through a pull request against this KEP, which is
+    presented at a SIG-Multicluster meeting and approved in the same way as a
+    promotion. The pull request states the reason and the replacement, if there
+    is one, and records the deprecation date and the removal date in the table
+    in [Well known properties](#well-known-properties).
+*   The removal date **must** be at least 12 months after the day on which the
+    pull request merges.
+*   A property **must not** be deprecated in favor of a replacement that is at
+    a lower stage.
+*   Until the removal date, the definition and its conformance checks stay in
+    force: a deprecated core property is still required, and the producers of a
+    deprecated standard property **should** keep publishing it. Consumers
+    **should** move to the replacement before the removal date.
+*   After the removal date, the property is no longer standard or core, and its
+    checks are removed from the conformance tests. Its definition stays in this
+    KEP, marked as removed, and its name is not reused.
+*   Moving a core property back to standard takes away its guaranteed presence,
+    and follows the same process with the same notice period.
+
+#### Property definition template
+
+A proposal for a standard property adds a section in the following form to
+[Well known properties](#well-known-properties), together with a row in the
+table of that section. Like the existing definitions, it states its
+requirements with the keywords **must, should,** and **may**.
+
+```markdown
+#### Property: `[INSERT PROPERTY NAME HERE]`
+
+[One or two sentences on what the property contains.]
+
+##### Use cases
+
+[The use cases that need the property, and why the existing well known
+properties do not cover them.]
+
+##### Producers
+
+[Who is expected to produce the property, which clusters it applies to, and
+whether its value is static or has to be kept up to date.]
+
+##### Uniqueness
+
+[The scope in which the value is unique, if it has to be unique.]
+
+##### Lifespan
+
+[When the property must exist, when it must not exist, and whether and when
+its value may change.]
+
+##### Contents
+
+[The format, the meaning and the maximum length of the value.]
+
+##### Consumers
+
+[What consumers may rely on, what they should watch for, and which consumers
+are known to use the property.]
+
+##### Notable scenarios (optional)
+
+[Edge cases that are worth spelling out.]
+```
 
 
 ### Notes/Constraints/Caveats
@@ -640,7 +958,7 @@ this time (see the Non-Goals section).
 # An example object of `cluster.clusterset.k8s.io ClusterProperty` 
 # using a kube-system ns uuid as the id value (recommended above):
 
-apiVersion: about.k8s.io/v1
+apiVersion: about.k8s.io/v1beta1
 kind: ClusterProperty
 metadata:
   name: cluster.clusterset.k8s.io
@@ -652,7 +970,7 @@ spec:
 # An example object of `cluster.clusterset.k8s.io ClusterProperty` 
 # using a human-readable string as the id value:
 
-apiVersion: about.k8s.io/v1
+apiVersion: about.k8s.io/v1beta1
 kind: ClusterProperty
 metadata:
   name: cluster.clusterset.k8s.io
@@ -701,7 +1019,7 @@ valid.
 ```
 # An example object of `clusterset.k8s.io ClusterProperty`:
 
-apiVersion: about.k8s.io/v1
+apiVersion: about.k8s.io/v1beta1
 kind: ClusterProperty
 metadata:
   name: clusterset.k8s.io
@@ -818,6 +1136,11 @@ tests that confirms any well-known properties stored in those clusters'
 `ClusterProperty` objects conform to the constraints in [Well known
 properties](#well-known-properties). 
 
+The [Property Ladder](#property-ladder) relies on these tests: they will
+contain checks for every standard and core property, and the reports that
+producers submit are the evidence for promoting a property, as described in
+[Conformance](#conformance).
+
 ### Graduation Criteria
 
 #### Alpha -> Beta Graduation
@@ -864,6 +1187,9 @@ may want to use this CRD (as debated in "To CRD or Not to CRD" section, above)
 but we believe it is in the scope of those future features to assess the impact
 of this CRD's version strategy on their component's version skew and their
 feature's stability if they do.
+
+Skew between the producers and the consumers of a well known property is
+covered in [Compatibility and versioning](#compatibility-and-versioning).
 
 ## Production Readiness Review Questionnaire
 
@@ -1156,6 +1482,28 @@ What other approaches did you consider, and why did you rule them out? These do
 not need to be as detailed as the proposal, but should include enough
 information to express the idea and why it was not acceptable.
 -->
+
+### Promoting properties by vote
+
+An earlier draft of the [Property Ladder](#property-ladder) promoted a property
+when two thirds of the voters approved it. A vote needs rules on who is
+eligible to vote, on quorum, on vetoes, and on how soon a rejected proposal may
+be voted on again, all of which would have to be defined just for this purpose.
+Requiring conformance checks and several independent producers gives the most
+say to those who produce and consume a property, and sets a higher bar than a
+vote: producing a property costs more than voting for it, which keeps out
+properties that sound convincing but that nobody goes on to produce.
+
+### A version for each property
+
+Giving each well known property a version of its own, in a new field of
+`ClusterProperty` or inside the value, was considered as a way to change a
+definition incompatibly. A cluster can hold only one `ClusterProperty` per
+name, so two versions could not be published at the same time, and the
+consumers of the old version would break as soon as a producer switched. A new
+name for an incompatible definition lets both be published side by side, the
+way Kubernetes moved from the `failure-domain.beta.kubernetes.io/zone` label to
+`topology.kubernetes.io/zone`.
 
 ## Infrastructure Needed (Optional)
 
